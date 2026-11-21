@@ -1368,3 +1368,594 @@ for (group_name in names(groups)) {
 }
 
 cat("Vsechny grafy byly vytvoreny.\n")
+
+
+
+
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(quantmod)
+
+# =====================================================
+# 1. NACHTENI TYDENNICH VYNOSU
+# =====================================================
+
+return_data <- readRDS(
+  "data/processed/returns/all_returns.rds"
+)
+
+# =====================================================
+# 2. DEFINICE ODVETVI
+# =====================================================
+
+groups <- list(
+
+  semiconductors = c(
+    "NVDA", "AMD", "INTC", "AVGO", "TSM"
+  ),
+
+  memory_technologies = c(
+    "MU", "005930.KS", "000660.KS", "SNDK"
+  ),
+
+  quantum_computing = c(
+    "IONQ", "RGTI", "QBTS", "IBM"
+  ),
+
+  stable_companies = c(
+    "KO", "PEP", "PG", "JNJ"
+  )
+)
+
+# =====================================================
+# 3. PREVOD DAT DO TABULKY
+# =====================================================
+
+returns_long <- bind_rows(
+  lapply(names(return_data), function(ticker) {
+
+    x <- return_data[[ticker]]
+
+    data.frame(
+      ticker = ticker,
+      Date = as.Date(index(x)),
+      weekly_return = as.numeric(x)
+    )
+  })
+)
+
+# =====================================================
+# 4. VYPOCET MESICNICH VYNOSU
+# =====================================================
+
+monthly_returns <- returns_long %>%
+
+  mutate(
+    month = floor_date(Date, unit = "month")
+  ) %>%
+
+  group_by(ticker, month) %>%
+
+  summarise(
+    monthly_return = (
+      prod(1 + weekly_return / 100) - 1
+    ) * 100,
+
+    .groups = "drop"
+  )
+
+# =====================================================
+# 5. SLOZKA PRO VYSLEDNE GRAFY
+# =====================================================
+
+output_dir <- "data/processed/statistics/graphs/time_series/monthly_returns"
+
+dir.create(
+  output_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+# =====================================================
+# 6. VYTVORENI CASOVYCH RAD PRO JEDNOTLIVA ODVETVI
+# =====================================================
+
+for (group_name in names(groups)) {
+
+  # Vybereme akcie aktualniho odvetvi
+
+  group_data <- monthly_returns %>%
+
+    filter(ticker %in% groups[[group_name]]) %>%
+
+    mutate(
+      ticker = factor(
+        ticker,
+        levels = groups[[group_name]]
+      )
+    ) %>%
+
+    arrange(month)
+
+  # Vytvoreni grafu
+
+  p <- ggplot(
+    group_data,
+    aes(
+      x = month,
+      y = monthly_return,
+      color = ticker,
+      group = ticker
+    )
+  ) +
+
+    geom_line(
+      linewidth = 0.7,
+      alpha = 0.85
+    ) +
+
+    geom_hline(
+      yintercept = 0,
+      color = "black",
+      linetype = "dashed",
+      linewidth = 0.5
+    ) +
+
+    scale_x_date(
+      date_breaks = "2 years",
+      date_labels = "%Y"
+    ) +
+
+    labs(
+      title = paste(
+        "Časová řada měsíčních výnosů –",
+        group_name
+      ),
+
+      subtitle = "Každá čára představuje jednu společnost",
+
+      x = "Datum",
+      y = "Měsíční výnos (%)",
+      color = "Společnost"
+    ) +
+
+    theme_minimal() +
+
+    theme(
+      plot.title = element_text(
+        face = "bold",
+        size = 14
+      ),
+
+      legend.position = "bottom",
+
+      legend.title = element_text(
+        face = "bold"
+      ),
+
+      legend.text = element_text(
+        size = 10
+      ),
+
+      axis.text.x = element_text(
+        angle = 45,
+        hjust = 1
+      )
+    )
+
+  # Ulozeni grafu
+
+  ggsave(
+    filename = file.path(
+      output_dir,
+      paste0(group_name, "_monthly_returns.png")
+    ),
+
+    plot = p,
+    width = 14,
+    height = 7,
+    dpi = 300
+  )
+
+  cat(
+    "Vytvoren graf:",
+    group_name,
+    "\n"
+  )
+}
+
+cat("Vsechny mesicni casove rady byly vytvoreny.\n")
+
+
+
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(quantmod)
+
+# =====================================================
+# 1. NACHTENI DAT
+# =====================================================
+
+return_data <- readRDS(
+  "data/processed/returns/all_returns.rds"
+)
+
+# =====================================================
+# 2. DEFINICE ODVETVI
+# =====================================================
+
+groups <- list(
+
+  semiconductors = c(
+    "NVDA", "AMD", "INTC", "AVGO", "TSM"
+  ),
+
+  memory_technologies = c(
+    "MU", "005930.KS", "000660.KS", "SNDK"
+  ),
+
+  quantum_computing = c(
+    "IONQ", "RGTI", "QBTS", "IBM"
+  ),
+
+  stable_companies = c(
+    "KO", "PEP", "PG", "JNJ"
+  )
+)
+
+# =====================================================
+# 3. PREVOD DAT DO TABULKY
+# =====================================================
+
+returns_long <- bind_rows(
+  lapply(names(return_data), function(ticker) {
+
+    x <- return_data[[ticker]]
+
+    data.frame(
+      ticker = ticker,
+      Date = as.Date(index(x)),
+      weekly_return = as.numeric(x)
+    )
+  })
+) %>%
+  filter(!is.na(weekly_return)) %>%
+  arrange(ticker, Date)
+
+# =====================================================
+# 4. VYSTUPNI SLOZKY
+# =====================================================
+
+base_dir <- paste0(
+  "data/processed/statistics/graphs/risk_analysis"
+)
+
+dir.create(
+  base_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+# =====================================================
+# 5. ROLLING VOLATILITY
+# =====================================================
+
+# Rizikovost vypocitana z poslednich 12 tydnu.
+# Vysledkem je smerodatna odchylka v procentech.
+
+rolling_data <- returns_long %>%
+
+  group_by(ticker) %>%
+
+  group_modify(~ {
+
+    stock_data <- arrange(.x, Date)
+
+    stock_data$rolling_volatility <- zoo::rollapplyr(
+      stock_data$weekly_return,
+      width = 12,
+      FUN = sd,
+      fill = NA,
+      align = "right"
+    )
+
+    stock_data
+  }) %>%
+
+  ungroup() %>%
+
+  filter(!is.na(rolling_volatility))
+
+# =====================================================
+# 6. ANALYZA JEDNOTLIVYCH ODVETVI
+# =====================================================
+
+for (group_name in names(groups)) {
+
+  cat("\nZpracovavam odvetvi:", group_name, "\n")
+
+  tickers <- groups[[group_name]]
+
+  group_data <- returns_long %>%
+    filter(ticker %in% tickers)
+
+  # ---------------------------------------------------
+  # 6A. SPOLECNE CASOVE OBDOBI
+  # ---------------------------------------------------
+
+  # Najdeme datum, od ktereho maji vsechny akcie data.
+  # Tim zajistime spravedlivejsi porovnani.
+
+  date_ranges <- group_data %>%
+
+    group_by(ticker) %>%
+
+    summarise(
+      first_date = min(Date),
+      last_date = max(Date),
+      .groups = "drop"
+    )
+
+  common_start <- max(date_ranges$first_date)
+  common_end <- min(date_ranges$last_date)
+
+  comparable_data <- group_data %>%
+
+    filter(
+      Date >= common_start,
+      Date <= common_end
+    )
+
+  cat(
+    "Spolecne obdobi:",
+    as.character(common_start),
+    "az",
+    as.character(common_end),
+    "\n"
+  )
+
+  # ---------------------------------------------------
+  # 6B. RISK - RETURN
+  # ---------------------------------------------------
+
+  risk_return <- comparable_data %>%
+
+    group_by(ticker) %>%
+
+    summarise(
+      average_return = mean(weekly_return),
+      volatility = sd(weekly_return),
+      observations = n(),
+      .groups = "drop"
+    )
+
+  p_risk_return <- ggplot(
+    risk_return,
+    aes(
+      x = volatility,
+      y = average_return,
+      color = ticker
+    )
+  ) +
+
+    geom_point(size = 4) +
+
+    geom_text(
+      aes(label = ticker),
+      nudge_y = 0.05,
+      show.legend = FALSE,
+      size = 3.5
+    ) +
+
+    labs(
+      title = paste(
+        "Vztah rizika a výnosnosti –",
+        group_name
+      ),
+
+      subtitle = paste(
+        "Spolecne obdobi:",
+        common_start,
+        "-",
+        common_end
+      ),
+
+      x = "Rizikovost – směrodatná odchylka (%)",
+      y = "Průměrný týdenní výnos (%)",
+      color = "Společnost"
+    ) +
+
+    theme_minimal() +
+
+    theme(
+      plot.title = element_text(
+        face = "bold"
+      ),
+
+      legend.position = "bottom"
+    )
+
+  ggsave(
+    file.path(
+      base_dir,
+      paste0(group_name, "_risk_return.png")
+    ),
+    p_risk_return,
+    width = 11,
+    height = 7,
+    dpi = 300
+  )
+
+  # Ulozeni vypoctenych hodnot
+
+  write.csv(
+    risk_return,
+    file.path(
+      base_dir,
+      paste0(group_name, "_risk_return.csv")
+    ),
+    row.names = FALSE
+  )
+
+  # ---------------------------------------------------
+  # 6C. ROLLING VOLATILITY
+  # ---------------------------------------------------
+
+  volatility_data <- rolling_data %>%
+
+    filter(ticker %in% tickers)
+
+  p_volatility <- ggplot(
+    volatility_data,
+    aes(
+      x = Date,
+      y = rolling_volatility,
+      color = ticker,
+      group = ticker
+    )
+  ) +
+
+    geom_line(
+      linewidth = 0.7,
+      alpha = 0.85
+    ) +
+
+    labs(
+      title = paste(
+        "Vývoj rizikovosti –",
+        group_name
+      ),
+
+      subtitle = "Klouzavá směrodatná odchylka posledních 12 týdnů",
+
+      x = "Datum",
+      y = "Rizikovost (%)",
+      color = "Společnost"
+    ) +
+
+    theme_minimal() +
+
+    theme(
+      plot.title = element_text(
+        face = "bold"
+      ),
+
+      legend.position = "bottom"
+    )
+
+  ggsave(
+    file.path(
+      base_dir,
+      paste0(group_name, "_rolling_volatility.png")
+    ),
+    p_volatility,
+    width = 14,
+    height = 7,
+    dpi = 300
+  )
+
+  # ---------------------------------------------------
+  # 6D. ROCNI RISK - RETURN
+  # ---------------------------------------------------
+
+  annual_data <- comparable_data %>%
+
+    mutate(
+      year = year(Date)
+    ) %>%
+
+    group_by(ticker, year) %>%
+
+    summarise(
+      average_return = mean(weekly_return),
+      volatility = sd(weekly_return),
+      observations = n(),
+      .groups = "drop"
+    )
+
+  p_annual <- ggplot(
+    annual_data,
+    aes(
+      x = volatility,
+      y = average_return,
+      color = year,
+      group = ticker
+    )
+  ) +
+
+    geom_path(
+      color = "grey60",
+      linewidth = 0.6
+    ) +
+
+    geom_point(
+      size = 3
+    ) +
+
+    geom_text(
+      aes(label = year),
+      size = 2.5,
+      vjust = -0.9,
+      show.legend = FALSE
+    ) +
+
+    facet_wrap(
+      ~ticker
+    ) +
+
+    scale_color_gradient(
+      low = "blue",
+      high = "red"
+    ) +
+
+    labs(
+      title = paste(
+        "Roční vývoj vztahu rizika a výnosnosti –",
+        group_name
+      ),
+
+      subtitle = "Každý bod představuje jeden kalendářní rok",
+
+      x = "Rizikovost – směrodatná odchylka (%)",
+      y = "Průměrný týdenní výnos (%)",
+      color = "Rok"
+    ) +
+
+    theme_minimal() +
+
+    theme(
+      plot.title = element_text(
+        face = "bold"
+      ),
+
+      legend.position = "bottom"
+    )
+
+  ggsave(
+    file.path(
+      base_dir,
+      paste0(group_name, "_annual_risk_return.png")
+    ),
+    p_annual,
+    width = 14,
+    height = 9,
+    dpi = 300
+  )
+
+  # Ulozeni rocni statistiky
+
+  write.csv(
+    annual_data,
+    file.path(
+      base_dir,
+      paste0(group_name, "_annual_risk_return.csv")
+    ),
+    row.names = FALSE
+  )
+
+  cat("Dokonceno:", group_name, "\n")
+}
+
+cat("\nVsechny grafy rizikovosti byly vytvoreny.\n")

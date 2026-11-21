@@ -763,3 +763,133 @@ cat("VYPOCET VYNOSU DOKONCEN\n")
 cat("====================================\n")
 
 print(returns_report)
+
+
+
+
+# ==========================================
+# 04 - POPISNA STATISTIKA JEDNOTLIVYCH AKCII
+# ==========================================
+
+library(quantmod)
+library(moments)
+
+# Nacteni vypocitanych tydennich vynosu
+return_data <- readRDS(
+  "data/processed/returns/all_returns.rds"
+)
+
+# Slozka pro vysledky
+stats_dir <- "data/processed/statistics"
+
+dir.create(
+  stats_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+# Tabulka pro popisnou statistiku
+descriptive_stats <- data.frame(
+  ticker = character(),
+  observations = integer(),
+  first_date = as.Date(character()),
+  last_date = as.Date(character()),
+  mean = numeric(),
+  variance = numeric(),
+  standard_deviation = numeric(),
+  skewness = numeric(),
+  excess_kurtosis = numeric(),
+  minimum = numeric(),
+  maximum = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Zpracovani kazde akcie
+for (ticker in names(return_data)) {
+
+  cat("\nAnalyzuji:", ticker, "\n")
+
+  # Nacteni casove rady vynosu
+  returns_xts <- return_data[[ticker]]
+
+  # Prevod na numericky vektor
+  values <- as.numeric(returns_xts)
+
+  # Kontrola dat
+  if (any(is.na(values))) {
+    stop(paste("Chybejici hodnoty u:", ticker))
+  }
+
+  if (length(values) < 2) {
+    stop(paste("Nedostatek pozorovani u:", ticker))
+  }
+
+  # Vypocet statistickych charakteristik
+  average <- mean(values)
+
+  variance_value <- var(values)
+
+  standard_deviation_value <- sd(values)
+
+  skewness_value <- moments::skewness(values)
+
+  # moments::kurtosis vraci klasickou spicatost,
+  # proto odecitame 3 a ziskame excesni spicatost.
+  excess_kurtosis_value <- moments::kurtosis(values) - 3
+
+  minimum_value <- min(values)
+
+  maximum_value <- max(values)
+
+  # Pridani vysledku
+  descriptive_stats <- rbind(
+    descriptive_stats,
+    data.frame(
+      ticker = ticker,
+      observations = length(values),
+      first_date = as.Date(first(index(returns_xts))),
+      last_date = as.Date(last(index(returns_xts))),
+      mean = average,
+      variance = variance_value,
+      standard_deviation = standard_deviation_value,
+      skewness = skewness_value,
+      excess_kurtosis = excess_kurtosis_value,
+      minimum = minimum_value,
+      maximum = maximum_value
+    )
+  )
+
+  cat("Prumer:", average, "\n")
+  cat("Rozptyl:", variance_value, "\n")
+  cat("Smerodatna odchylka:", standard_deviation_value, "\n")
+  cat("Sikmost:", skewness_value, "\n")
+  cat("Excesni spicatost:", excess_kurtosis_value, "\n")
+  cat("Minimum:", minimum_value, "\n")
+  cat("Maximum:", maximum_value, "\n")
+}
+
+# Ulozeni vysledku do CSV
+write.csv(
+  descriptive_stats,
+  file = file.path(
+    stats_dir,
+    "individual_descriptive_statistics.csv"
+  ),
+  row.names = FALSE
+)
+
+# Ulozeni i do RDS pro dalsi zpracovani
+saveRDS(
+  descriptive_stats,
+  file = file.path(
+    stats_dir,
+    "individual_descriptive_statistics.rds"
+  )
+)
+
+# Vypis vysledne tabulky
+cat("\n========================================\n")
+cat("POPISNA STATISTIKA DOKONCENA\n")
+cat("========================================\n")
+
+print(descriptive_stats)

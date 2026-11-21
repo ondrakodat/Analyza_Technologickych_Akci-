@@ -2219,3 +2219,329 @@ cat("Pocet zpracovanych spolecnosti:", nrow(statistics), "\n")
 cat("Graf: risk_return_map.png\n")
 cat("Tabulka: risk_return_data.csv\n")
 cat("Ulozeno do:", normalizePath(output_dir), "\n")
+
+
+
+
+
+
+# ============================================================
+# 09 - SOUHRNNA MAPA RIZIKOVOSTI A VYNOSNOSTI AKCII
+# ============================================================
+
+library(tidyverse)
+library(ggplot2)
+library(xts)
+library(zoo)
+
+# ------------------------------------------------------------
+# 1. PRACOVNI ADRESAR
+# ------------------------------------------------------------
+
+setwd("C:/Users/revel/OneDrive/Desktop/StatistikaFinancichTrhu")
+
+# ------------------------------------------------------------
+# 2. INSTALACE A NACITANI BALICKU
+# ------------------------------------------------------------
+
+if (!requireNamespace("ggrepel", quietly = TRUE)) {
+  install.packages("ggrepel")
+}
+
+library(ggrepel)
+
+# ------------------------------------------------------------
+# 3. NACITANI DAT
+# ------------------------------------------------------------
+
+returns_list <- readRDS(
+  "data/processed/returns/all_returns.rds"
+)
+
+# ------------------------------------------------------------
+# 4. PREVOD CASOVYCH RAD NA JEDNU TABULKU
+# ------------------------------------------------------------
+
+returns_data <- purrr::map_dfr(
+  names(returns_list),
+  function(ticker_name) {
+
+    stock_returns <- returns_list[[ticker_name]]
+
+    if (inherits(stock_returns, "xts") ||
+        inherits(stock_returns, "zoo")) {
+
+      stock_data <- tibble(
+        Date = as.Date(zoo::index(stock_returns)),
+        weekly_return = as.numeric(
+          zoo::coredata(stock_returns)[, 1]
+        )
+      )
+
+    } else if (is.data.frame(stock_returns)) {
+
+      stock_data <- as_tibble(stock_returns)
+
+      date_column <- intersect(
+        c("Date", "date", "index"),
+        names(stock_data)
+      )[1]
+
+      return_column <- intersect(
+        c("return", "Return", "returns", "Returns"),
+        names(stock_data)
+      )[1]
+
+      if (is.na(date_column) || is.na(return_column)) {
+        stop(paste("Neznamy format dat pro:", ticker_name))
+      }
+
+      stock_data <- tibble(
+        Date = as.Date(stock_data[[date_column]]),
+        weekly_return = as.numeric(stock_data[[return_column]])
+      )
+
+    } else {
+      stop(paste("Nepodporovany format dat pro:", ticker_name))
+    }
+
+    stock_data %>%
+      mutate(ticker = ticker_name) %>%
+      select(ticker, Date, weekly_return)
+  }
+)
+
+returns_data <- returns_data %>%
+  filter(
+    !is.na(Date),
+    !is.na(weekly_return)
+  )
+
+# ------------------------------------------------------------
+# 5. DEFINICE SKUPIN AKCII
+# ------------------------------------------------------------
+
+groups <- tibble(
+  ticker = c(
+    "NVDA", "AMD", "INTC", "AVGO", "TSM",
+    "MU", "005930.KS", "000660.KS", "SNDK",
+    "IONQ", "RGTI", "QBTS",
+    "IBM", "KO", "PEP", "PG", "JNJ",
+    "^GSPC", "^NDX"
+  ),
+
+  group = c(
+    rep("Polovodiče", 5),
+    rep("Paměťové technologie", 4),
+    rep("Kvantové počítače", 3),
+    rep("Stabilní společnosti", 5),
+    rep("Tržní indexy", 2)
+  )
+)
+
+# ------------------------------------------------------------
+# 6. VYPOCET STATISTIK
+# ------------------------------------------------------------
+
+statistics <- returns_data %>%
+  group_by(ticker) %>%
+  arrange(Date, .by_group = TRUE) %>%
+  summarise(
+
+    observations = n(),
+
+    first_date = min(Date),
+    last_date = max(Date),
+
+    years = as.numeric(last_date - first_date) / 365.25,
+
+    growth_factor = prod(1 + weekly_return / 100),
+
+    cumulative_return = (growth_factor - 1) * 100,
+
+    CAGR = if_else(
+      years > 0 & growth_factor > 0,
+      (growth_factor^(1 / years) - 1) * 100,
+      NA_real_
+    ),
+
+    annualized_volatility = sd(weekly_return) * sqrt(52),
+
+    .groups = "drop"
+  ) %>%
+  left_join(groups, by = "ticker") %>%
+  filter(
+    !is.na(CAGR),
+    !is.na(annualized_volatility)
+  )
+
+# ------------------------------------------------------------
+# 7. VYTVORENI VYSTUPNI SLOZKY
+# ------------------------------------------------------------
+
+output_dir <- "data/processed/statistics/risk_return"
+
+dir.create(
+  output_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+# ------------------------------------------------------------
+# 8. ULOZENI VYPOCTENYCH STATISTIK
+# ------------------------------------------------------------
+
+write_csv(
+  statistics,
+  file.path(output_dir, "risk_return_data.csv")
+)
+
+# ------------------------------------------------------------
+# 9. VYTVORENI PREHLEDNEHO GRAFU
+# ------------------------------------------------------------
+
+risk_return_plot <- ggplot(
+  statistics,
+  aes(
+    x = CAGR,
+    y = annualized_volatility,
+    color = group
+  )
+) +
+
+  # Nulovy vynos
+  geom_vline(
+    xintercept = 0,
+    color = "black",
+    linetype = "dashed",
+    linewidth = 0.7
+  ) +
+
+  # Body jednotlivych spolecnosti
+  geom_point(
+    size = 4,
+    alpha = 0.9
+  ) +
+
+  # Popisky s automatickym rozmistenim
+  geom_label_repel(
+    aes(label = ticker),
+    size = 3.5,
+    fontface = "bold",
+    fill = "white",
+    alpha = 0.9,
+    box.padding = 0.7,
+    point.padding = 0.5,
+    max.overlaps = Inf,
+    min.segment.length = 0,
+    show.legend = FALSE
+  ) +
+
+  # Pseudo-logaritmicka osa vynosu
+  scale_x_continuous(
+    trans = scales::pseudo_log_trans(sigma = 10),
+    breaks = c(-100, -50, -20, -10, 0, 10, 20, 50, 100, 200, 400)
+  ) +
+
+  # Pseudo-logaritmicka osa rizika
+  scale_y_continuous(
+    trans = scales::pseudo_log_trans(sigma = 10),
+    breaks = c(10, 20, 30, 40, 60, 80, 100, 120, 160)
+  ) +
+
+  # Barvy skupin
+  scale_color_manual(
+    values = c(
+      "Polovodiče" = "#2878B5",
+      "Paměťové technologie" = "#E58B24",
+      "Kvantové počítače" = "#9467BD",
+      "Stabilní společnosti" = "#2CA02C",
+      "Tržní indexy" = "#555555"
+    )
+  ) +
+
+  # Nazvy a popisky
+  labs(
+    title = "Rizikovost a výnosnost akciových společností",
+
+    subtitle = "Porovnání všech 19 sledovaných společností",
+
+    x = "Anualizovaný složený výnos CAGR (%)",
+
+    y = "Anualizovaná volatilita (%)",
+
+    color = "Skupina společností",
+
+    caption = paste(
+      "Zdroj: vlastní zpracování týdenních cenových výnosů.",
+      "Obě osy používají pseudo-logaritmickou transformaci.",
+      "Každá společnost využívá celou dostupnou historii."
+    )
+  ) +
+
+  # Vzhled grafu
+  theme_minimal(base_size = 13) +
+
+  theme(
+    plot.title = element_text(
+      face = "bold",
+      size = 17
+    ),
+
+    plot.subtitle = element_text(
+      size = 12
+    ),
+
+    legend.position = "bottom",
+
+    panel.grid.minor = element_blank(),
+
+    plot.margin = margin(20, 25, 20, 20)
+  )
+
+# ------------------------------------------------------------
+# 10. ZOBRAZENI GRAFU
+# ------------------------------------------------------------
+
+print(risk_return_plot)
+
+# ------------------------------------------------------------
+# 11. ULOZENI GRAFU
+# ------------------------------------------------------------
+
+ggsave(
+  filename = file.path(
+    output_dir,
+    "risk_return_map.png"
+  ),
+
+  plot = risk_return_plot,
+
+  width = 16,
+  height = 11,
+  dpi = 300
+)
+
+# ------------------------------------------------------------
+# 12. VYPIS VYSLEDKU
+# ------------------------------------------------------------
+
+cat("\n========================================\n")
+cat("ANALYZA DOKONCENA\n")
+cat("========================================\n")
+
+cat("Pocet zpracovanych spolecnosti:", nrow(statistics), "\n")
+
+cat(
+  "Graf:",
+  file.path(output_dir, "risk_return_map.png"),
+  "\n"
+)
+
+cat(
+  "Tabulka:",
+  file.path(output_dir, "risk_return_data.csv"),
+  "\n"
+)
+
+cat("========================================\n")

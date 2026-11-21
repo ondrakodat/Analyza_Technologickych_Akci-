@@ -1136,3 +1136,235 @@ p_histogram_curves <- ggplot(
     y = "Hustota"
   ) +
   theme_minimal()
+
+
+
+
+
+library(ggplot2)
+library(dplyr)
+library(quantmod)
+
+# =====================================================
+# 1. NACHTENI DAT
+# =====================================================
+
+return_data <- readRDS("data/processed/returns/all_returns.rds")
+
+# Hlavni slozka pro grafy
+base_dir <- "data/processed/statistics/graphs"
+
+# =====================================================
+# 2. ROZDELENI AKCII DO SKUPIN
+# =====================================================
+
+groups <- list(
+  semiconductors = c("NVDA", "AMD", "INTC", "AVGO", "TSM"),
+
+  memory_technologies = c(
+    "MU", "005930.KS", "000660.KS", "SNDK"
+  ),
+
+  quantum_computing = c(
+    "IONQ", "RGTI", "QBTS", "IBM"
+  ),
+
+  stable_companies = c(
+    "KO", "PEP", "PG", "JNJ"
+  )
+)
+
+# =====================================================
+# 3. PREVOD DAT DO TABULKY
+# =====================================================
+
+returns_long <- bind_rows(
+  lapply(names(return_data), function(ticker) {
+
+    x <- return_data[[ticker]]
+
+    data.frame(
+      ticker = ticker,
+      Date = as.Date(index(x)),
+      return = as.numeric(x)
+    )
+  })
+)
+
+# =====================================================
+# 4. VYTVORENI GRAFU PRO KAZDOU SKUPINU
+# =====================================================
+
+for (group_name in names(groups)) {
+
+  # Vybereme akcie patrici do aktualni skupiny
+  group_tickers <- groups[[group_name]]
+
+  group_data <- returns_long %>%
+    filter(ticker %in% group_tickers) %>%
+    mutate(ticker = factor(ticker, levels = group_tickers))
+
+  # Vytvoreni slozek
+  group_dir <- file.path(base_dir, group_name)
+  scatter_dir <- file.path(base_dir, "scatter", group_name)
+
+  dir.create(group_dir, recursive = TRUE, showWarnings = FALSE)
+  dir.create(scatter_dir, recursive = TRUE, showWarnings = FALSE)
+
+  # ===================================================
+  # 4A. HISTOGRAM S EMPIRICKOU A NORMALNI KRIVKOU
+  # ===================================================
+
+  normal_curves <- bind_rows(
+    lapply(split(group_data, group_data$ticker), function(df) {
+
+      m <- mean(df$return)
+      s <- sd(df$return)
+
+      x_values <- seq(
+        min(df$return),
+        max(df$return),
+        length.out = 300
+      )
+
+      data.frame(
+        ticker = df$ticker[1],
+        return = x_values,
+        density = dnorm(x_values, mean = m, sd = s)
+      )
+    })
+  )
+
+  histogram <- ggplot(group_data, aes(x = return)) +
+
+    geom_histogram(
+      aes(y = after_stat(density)),
+      bins = 40,
+      fill = "lightblue",
+      color = "white"
+    ) +
+
+    geom_density(
+      color = "blue",
+      linewidth = 0.8
+    ) +
+
+    geom_line(
+      data = normal_curves,
+      aes(x = return, y = density),
+      color = "red",
+      linetype = "dashed",
+      linewidth = 0.8
+    ) +
+
+    facet_wrap(
+      ~ticker,
+      scales = "free",
+      ncol = 2
+    ) +
+
+    labs(
+      title = paste("Rozdělení týdenních výnosů –", group_name),
+      subtitle = "Modrá: empirická hustota | Červená: normální rozdělení",
+      x = "Týdenní výnos (%)",
+      y = "Hustota"
+    ) +
+
+    theme_minimal()
+
+  ggsave(
+    filename = file.path(group_dir, "histogram.png"),
+    plot = histogram,
+    width = 12,
+    height = 8,
+    dpi = 300
+  )
+
+  # ===================================================
+  # 4B. VERTIKALNI BOXPLOT
+  # ===================================================
+
+  boxplot <- ggplot(
+    group_data,
+    aes(x = ticker, y = return)
+  ) +
+
+    geom_boxplot(
+      fill = "lightblue",
+      color = "darkblue",
+      outlier.color = "red",
+      outlier.alpha = 0.5
+    ) +
+
+    geom_hline(
+      yintercept = 0,
+      color = "red",
+      linetype = "dashed"
+    ) +
+
+    labs(
+      title = paste("Boxplot týdenních výnosů –", group_name),
+      x = "Akcie",
+      y = "Týdenní výnos (%)"
+    ) +
+
+    theme_minimal()
+
+  ggsave(
+    filename = file.path(group_dir, "boxplot.png"),
+    plot = boxplot,
+    width = 12,
+    height = 7,
+    dpi = 300
+  )
+
+  # ===================================================
+  # 4C. SAMOSTATNY SCATTER PLOT PRO KAZDOU AKCII
+  # ===================================================
+
+  for (ticker_name in group_tickers) {
+
+    stock_data <- group_data %>%
+      filter(ticker == ticker_name)
+
+    scatter <- ggplot(
+      stock_data,
+      aes(x = Date, y = return)
+    ) +
+
+      geom_point(
+        color = "steelblue",
+        alpha = 0.6,
+        size = 1
+      ) +
+
+      geom_hline(
+        yintercept = 0,
+        color = "red",
+        linetype = "dashed"
+      ) +
+
+      labs(
+        title = paste("Vývoj týdenních výnosů –", ticker_name),
+        x = "Datum",
+        y = "Týdenní výnos (%)"
+      ) +
+
+      theme_minimal()
+
+    ggsave(
+      filename = file.path(
+        scatter_dir,
+        paste0(ticker_name, ".png")
+      ),
+      plot = scatter,
+      width = 12,
+      height = 6,
+      dpi = 300
+    )
+  }
+
+  cat("Dokoncena skupina:", group_name, "\n")
+}
+
+cat("Vsechny grafy byly vytvoreny.\n")

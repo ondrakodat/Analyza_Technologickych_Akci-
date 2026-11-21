@@ -265,3 +265,326 @@ print(download_log)
 cat("\n============================================\n")
 cat("KONEC PROGRAMU\n")
 cat("============================================\n")
+
+
+
+# ============================================================
+# KONTROLA CHYBEJICICH HODNOT
+# ============================================================
+
+missing_report <- data.frame()
+
+for (ticker in names(stock_data)) {
+
+  stock <- stock_data[[ticker]]
+
+  # Pocet chybejicich hodnot v jednotlivych sloupcich
+  missing_counts <- colSums(is.na(stock))
+
+  # Celkovy pocet chybejicich hodnot
+  total_missing <- sum(missing_counts)
+
+  # Pocet radku, ve kterych chybi alespon jedna hodnota
+  incomplete_rows <- sum(!complete.cases(stock))
+
+  # Pridani vysledku do reportu
+  missing_report <- rbind(
+    missing_report,
+    data.frame(
+      ticker = ticker,
+      observations = NROW(stock),
+      missing_values = total_missing,
+      incomplete_rows = incomplete_rows
+    )
+  )
+
+  # Vypis pouze instrumentu s chybejicimi hodnotami
+  if (total_missing > 0) {
+
+    cat("\n====================================\n")
+    cat("INSTRUMENT:", ticker, "\n")
+    cat("====================================\n")
+
+    print(missing_counts[missing_counts > 0])
+
+    # Vypis prvnich 10 dat, kde neco chybi
+    missing_dates <- index(stock)[
+      !complete.cases(stock)
+    ]
+
+    cat("\nPrvni chybejici zaznamy:\n")
+    print(head(missing_dates, 10))
+  }
+}
+
+
+# ------------------------------------------------------------
+# SOUHRN
+# ------------------------------------------------------------
+
+cat("\n====================================\n")
+cat("SOUHRN CHYBEJICICH HODNOT\n")
+cat("====================================\n")
+
+print(missing_report)
+
+# Ulozeni reportu
+write.csv(
+  missing_report,
+  "data/raw/missing_values_report.csv",
+  row.names = FALSE
+)
+
+
+
+
+# ============================================================
+# 1. PRIPRAVA ZPRACOVANYCH DAT
+# ============================================================
+
+library(quantmod)
+
+# Cesty ke slozkam
+raw_dir <- "data/raw"
+processed_dir <- "data/processed"
+
+# Vytvoreni slozky processed
+dir.create(
+  processed_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+
+# ============================================================
+# 2. NACTENI STAZENYCH DAT
+# ============================================================
+
+stock_data <- readRDS(
+  file.path(raw_dir, "all_stock_data.rds")
+)
+
+
+# ============================================================
+# 3. CISTENI DAT
+# ============================================================
+
+clean_stock_data <- list()
+
+cleaning_report <- data.frame(
+  ticker = character(),
+  original_rows = integer(),
+  removed_rows = integer(),
+  remaining_rows = integer(),
+  missing_values = integer(),
+  stringsAsFactors = FALSE
+)
+
+
+for (ticker in names(stock_data)) {
+
+  cat("\nZpracovavam:", ticker, "\n")
+
+  stock <- stock_data[[ticker]]
+
+  # Pocet puvodnich radku
+  original_rows <- NROW(stock)
+
+  # Odstraneni pouze radku, kde chybi vsechny hodnoty
+  # (napriklad neobchodovany posledni tyden)
+  stock_clean <- stock[
+    !apply(is.na(stock), 1, all)
+  ]
+
+  # Pocet odstraněnych radku
+  removed_rows <- original_rows - NROW(stock_clean)
+
+  # Pocet zbyvajicich chybejicich hodnot
+  remaining_missing <- sum(is.na(stock_clean))
+
+  # Ulozeni vycistenych dat do seznamu
+  clean_stock_data[[ticker]] <- stock_clean
+
+
+  # Prevod tickeru na nazev souboru
+  filename <- gsub(
+    "[^A-Za-z0-9_-]",
+    "_",
+    ticker
+  )
+
+  # Prevod na beznou tabulku
+  csv_data <- data.frame(
+    Date = as.Date(index(stock_clean)),
+    coredata(stock_clean)
+  )
+
+  # Ulozeni CSV
+  write.csv(
+    csv_data,
+    file = file.path(
+      processed_dir,
+      paste0(filename, ".csv")
+    ),
+    row.names = FALSE
+  )
+
+
+  # Zaznam do reportu
+  cleaning_report <- rbind(
+    cleaning_report,
+    data.frame(
+      ticker = ticker,
+      original_rows = original_rows,
+      removed_rows = removed_rows,
+      remaining_rows = NROW(stock_clean),
+      missing_values = remaining_missing,
+      stringsAsFactors = FALSE
+    )
+  )
+
+  cat("Puvodni radky:", original_rows, "\n")
+  cat("Odstranene radky:", removed_rows, "\n")
+  cat("Zbyvajici radky:", NROW(stock_clean), "\n")
+  cat("Chybejici hodnoty:", remaining_missing, "\n")
+
+}
+
+
+# ============================================================
+# 4. ULOZENI VYCISTENYCH DAT
+# ============================================================
+
+saveRDS(
+  clean_stock_data,
+  file = file.path(
+    processed_dir,
+    "all_stock_data_clean.rds"
+  )
+)
+
+
+# ============================================================
+# 5. ULOZENI REPORTU
+# ============================================================
+
+write.csv(
+  cleaning_report,
+  file = file.path(
+    processed_dir,
+    "cleaning_report.csv"
+  ),
+  row.names = FALSE
+)
+
+
+# ============================================================
+# 6. ZAVERECNY VYPIS
+# ============================================================
+
+cat("\n====================================\n")
+cat("CISTENI DAT DOKONCENO\n")
+cat("====================================\n")
+
+print(cleaning_report)
+
+cat("\nVycistena data jsou ulozena v:", processed_dir, "\n")
+
+
+
+
+# ==========================================
+# 02 - KONTROLA CENOVYCH DAT
+# ==========================================
+
+library(quantmod)
+
+# Nacteni ocistenych dat
+stock_data <- readRDS(
+  "data/processed/all_stock_data_clean.rds"
+)
+
+# Tabulka pro vysledky kontroly
+price_report <- data.frame(
+  ticker = character(),
+  adjusted_column = character(),
+  close_column = character(),
+  adjusted_missing = integer(),
+  close_missing = integer(),
+  adjusted_equals_close = logical(),
+  first_price = numeric(),
+  last_price = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Kontrola kazdeho instrumentu
+for (ticker in names(stock_data)) {
+
+  stock <- stock_data[[ticker]]
+
+  # Najdeme sloupce Adjusted a Close
+  adjusted_col <- grep(
+    "Adjusted$",
+    colnames(stock),
+    value = TRUE
+  )
+
+  close_col <- grep(
+    "Close$",
+    colnames(stock),
+    value = TRUE
+  )
+
+  # Overime existenci obou sloupcu
+  if (length(adjusted_col) != 1 ||
+      length(close_col) != 1) {
+
+    stop(paste(
+      "Chybi nebo je vice odpovidajicich sloupcu u:",
+      ticker
+    ))
+  }
+
+  adjusted <- stock[, adjusted_col]
+  close <- stock[, close_col]
+
+  # Pocet chybejicich hodnot
+  adjusted_missing <- sum(is.na(adjusted))
+  close_missing <- sum(is.na(close))
+
+  # Zjistime, zda jsou ceny totozne
+  same_prices <- isTRUE(
+    all.equal(
+      as.numeric(adjusted),
+      as.numeric(close)
+    )
+  )
+
+  # Pridani vysledku do reportu
+  price_report <- rbind(
+    price_report,
+    data.frame(
+      ticker = ticker,
+      adjusted_column = adjusted_col,
+      close_column = close_col,
+      adjusted_missing = adjusted_missing,
+      close_missing = close_missing,
+      adjusted_equals_close = same_prices,
+      first_price = as.numeric(first(adjusted)),
+      last_price = as.numeric(last(adjusted)),
+      stringsAsFactors = FALSE
+    )
+  )
+}
+
+# Ulozeni reportu
+write.csv(
+  price_report,
+  "data/processed/price_check_report.csv",
+  row.names = FALSE
+)
+
+# Vypis vysledku
+print(price_report)
+
+cat("\nKONTROLA CEN DOKONCENA\n")

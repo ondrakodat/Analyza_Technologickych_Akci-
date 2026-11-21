@@ -588,3 +588,178 @@ write.csv(
 print(price_report)
 
 cat("\nKONTROLA CEN DOKONCENA\n")
+
+
+
+
+# ==========================================
+# KONTROLA SK HYNIX
+# ==========================================
+
+stock_data <- readRDS(
+  "data/processed/all_stock_data_clean.rds"
+)
+
+hynix <- stock_data[["000660.KS"]]
+
+# Zobrazime prvnich 15 zaznamu
+cat("PRVNICH 15 ZAZNAMU:\n")
+print(head(hynix[, c("000660.KS.Close",
+                     "000660.KS.Adjusted")], 15))
+
+# Zobrazime poslednich 10 zaznamu
+cat("\nPOSLEDNICH 10 ZAZNAMU:\n")
+print(tail(hynix[, c("000660.KS.Close",
+                     "000660.KS.Adjusted")], 10))
+
+# Zakladni statistiky
+cat("\nMINIMALNI CLOSE:\n")
+print(min(hynix$`000660.KS.Close`, na.rm = TRUE))
+
+cat("\nMINIMALNI ADJUSTED:\n")
+print(min(hynix$`000660.KS.Adjusted`, na.rm = TRUE))
+
+cat("\nPOCET ZAPORNYCH ADJUSTED HODNOT:\n")
+print(sum(hynix$`000660.KS.Adjusted` < 0, na.rm = TRUE))
+
+
+
+
+# ==========================================
+# 03 - VYPOCET TYDENNICH VYNOSU
+# ==========================================
+
+library(quantmod)
+
+# Nacteni ocistenych cenovych dat
+stock_data <- readRDS(
+  "data/processed/all_stock_data_clean.rds"
+)
+
+# Slozka pro vysledky
+returns_dir <- "data/processed/returns"
+
+dir.create(
+  returns_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+# Seznam pro ulozeni vynosu
+return_data <- list()
+
+# Report vysledku
+returns_report <- data.frame(
+  ticker = character(),
+  observations = integer(),
+  first_date = as.Date(character()),
+  last_date = as.Date(character()),
+  mean_return = numeric(),
+  sd_return = numeric(),
+  min_return = numeric(),
+  max_return = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Zpracovani jednotlivych instrumentu
+for (ticker in names(stock_data)) {
+
+  cat("\nZpracovavam:", ticker, "\n")
+
+  stock <- stock_data[[ticker]]
+
+  # Najdeme sloupec Close
+  close_col <- grep(
+    "Close$",
+    colnames(stock),
+    value = TRUE
+  )
+
+  if (length(close_col) != 1) {
+    stop(paste("Problem se sloupcem Close:", ticker))
+  }
+
+  # Extrakce uzaviracich cen
+  prices <- as.numeric(stock[, close_col])
+
+  # Kontrola cen
+  if (any(is.na(prices)) || any(prices <= 0)) {
+    stop(paste("Neplatne ceny u:", ticker))
+  }
+
+  # Vypocet tydennich procentualnich vynosu
+  returns <- c(
+    NA_real_,
+    (prices[-1] / prices[-length(prices)] - 1) * 100
+  )
+
+  # Vytvoreni casove rady
+  returns_xts <- xts::xts(
+    returns,
+    order.by = index(stock)
+  )
+
+  colnames(returns_xts) <- ticker
+
+  # Prvni vynos nelze vypocitat - odstraneni prvniho NA
+  returns_xts <- returns_xts[-1, , drop = FALSE]
+
+  # Ulozeni do seznamu
+  return_data[[ticker]] <- returns_xts
+
+  # Ulozeni samostatneho CSV
+  filename <- gsub("[^A-Za-z0-9_-]", "_", ticker)
+
+  csv_data <- data.frame(
+    Date = as.Date(index(returns_xts)),
+    Return = as.numeric(returns_xts)
+  )
+
+  write.csv(
+    csv_data,
+    file = file.path(
+      returns_dir,
+      paste0(filename, "_returns.csv")
+    ),
+    row.names = FALSE
+  )
+
+  # Statistiky vynosu
+  returns_values <- as.numeric(returns_xts)
+
+  returns_report <- rbind(
+    returns_report,
+    data.frame(
+      ticker = ticker,
+      observations = length(returns_values),
+      first_date = as.Date(first(index(returns_xts))),
+      last_date = as.Date(last(index(returns_xts))),
+      mean_return = mean(returns_values),
+      sd_return = sd(returns_values),
+      min_return = min(returns_values),
+      max_return = max(returns_values),
+      stringsAsFactors = FALSE
+    )
+  )
+
+  cat("Pocet vynosu:", length(returns_values), "\n")
+}
+
+# Ulozeni vsech casovych rad
+saveRDS(
+  return_data,
+  file = file.path(returns_dir, "all_returns.rds")
+)
+
+# Ulozeni statistickeho reportu
+write.csv(
+  returns_report,
+  file = file.path(returns_dir, "returns_report.csv"),
+  row.names = FALSE
+)
+
+cat("\n====================================\n")
+cat("VYPOCET VYNOSU DOKONCEN\n")
+cat("====================================\n")
+
+print(returns_report)

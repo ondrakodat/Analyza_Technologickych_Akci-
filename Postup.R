@@ -893,3 +893,246 @@ cat("POPISNA STATISTIKA DOKONCENA\n")
 cat("========================================\n")
 
 print(descriptive_stats)
+
+
+
+
+
+# ==========================================
+# 06 - HISTOGRAMY, BOXPLOTY A BODOVE GRAFY
+# ==========================================
+
+library(ggplot2)
+library(dplyr)
+library(quantmod)
+
+# Nacteni tydennich vynosu
+return_data <- readRDS(
+  "data/processed/returns/all_returns.rds"
+)
+
+# Slozka pro grafy
+plots_dir <- "data/processed/statistics/graphs"
+
+dir.create(
+  plots_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+# ==========================================
+# 1. PRIPRAVA DAT
+# ==========================================
+
+returns_long <- bind_rows(
+  lapply(names(return_data), function(ticker) {
+
+    returns_xts <- return_data[[ticker]]
+
+    data.frame(
+      ticker = ticker,
+      Date = as.Date(index(returns_xts)),
+      return = as.numeric(returns_xts)
+    )
+  })
+)
+
+# ==========================================
+# 2. HISTOGRAM S HUSTOTOU A NORMALNIM
+#    ROZDELENIM
+# ==========================================
+
+# Histogram bude mit na ose Y hustotu,
+# aby bylo mozne porovnat obe krivky.
+
+p_histogram_curves <- ggplot(
+  returns_long,
+  aes(x = return)
+) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 40,
+    fill = "lightblue",
+    color = "white"
+  ) +
+  geom_density(
+    color = "blue",
+    linewidth = 0.9
+  ) +
+  stat_function(
+    fun = dnorm,
+    args = list(
+      mean = mean(returns_long$return),
+      sd = sd(returns_long$return)
+    ),
+    color = "red",
+    linetype = "dashed",
+    linewidth = 0.9
+  ) +
+  facet_wrap(
+    ~ ticker,
+    scales = "free",
+    ncol = 3
+  ) +
+  labs(
+    title = "Rozdeleni tydennich vynosu",
+    subtitle = paste(
+      "Modra: empiricka hustota |",
+      "Cervena: normalni rozdeleni"
+    ),
+    x = "Tydenni vynos (%)",
+    y = "Hustota"
+  ) +
+  theme_minimal()
+
+# Ulozeni histogramu
+ggsave(
+  file.path(plots_dir, "08_histograms_with_curves.png"),
+  p_histogram_curves,
+  width = 16,
+  height = 14,
+  dpi = 300
+)
+
+
+# ==========================================
+# 3. BOXPLOT
+# ==========================================
+
+p_boxplot <- ggplot(
+  returns_long,
+  aes(
+    x = reorder(ticker, return, FUN = median),
+    y = return
+  )
+) +
+  geom_boxplot(
+    fill = "lightblue",
+    color = "darkblue",
+    outlier.color = "red",
+    outlier.alpha = 0.5
+  ) +
+  geom_hline(
+    yintercept = 0,
+    color = "black",
+    linetype = "dashed"
+  ) +
+  coord_flip() +
+  labs(
+    title = "Boxplot tydennich vynosu",
+    subtitle = "Porovnani rozdeleni a extremnich hodnot",
+    x = "Instrument",
+    y = "Tydenni vynos (%)"
+  ) +
+  theme_minimal()
+
+ggsave(
+  file.path(plots_dir, "09_boxplot.png"),
+  p_boxplot,
+  width = 12,
+  height = 9,
+  dpi = 300
+)
+
+
+# ==========================================
+# 4. BODOVY GRAF V CASE
+# ==========================================
+
+p_scatter <- ggplot(
+  returns_long,
+  aes(
+    x = Date,
+    y = return
+  )
+) +
+  geom_point(
+    color = "steelblue",
+    alpha = 0.5,
+    size = 0.7
+  ) +
+  geom_hline(
+    yintercept = 0,
+    color = "red",
+    linetype = "dashed"
+  ) +
+  facet_wrap(
+    ~ ticker,
+    scales = "free_x",
+    ncol = 3
+  ) +
+  labs(
+    title = "Vyvoj tydennich vynosu v case",
+    subtitle = "Kazdy bod predstavuje jeden tyden",
+    x = "Datum",
+    y = "Tydenni vynos (%)"
+  ) +
+  theme_minimal()
+
+ggsave(
+  file.path(plots_dir, "10_scatter_returns_over_time.png"),
+  p_scatter,
+  width = 16,
+  height = 14,
+  dpi = 300
+)
+
+
+# ==========================================
+# 5. KONEC
+# ==========================================
+
+cat("\n====================================\n")
+cat("DALSÍ GRAFY BYLY VYTVORENY\n")
+cat("====================================\n")
+
+print(list.files(plots_dir))
+
+# Zobrazeni grafu v R
+print(p_histogram_curves)
+print(p_boxplot)
+print(p_scatter)
+
+
+
+# ==========================================
+# 2. HISTOGRAMY S KRIVKAMI PRO KAZDOU AKCII
+# ==========================================
+
+p_histogram_curves <- ggplot(
+  returns_long,
+  aes(x = return)
+) +
+  geom_histogram(
+    aes(y = after_stat(density)),
+    bins = 40,
+    fill = "lightblue",
+    color = "white"
+  ) +
+  geom_density(
+    color = "blue",
+    linewidth = 0.9
+  ) +
+  stat_function(
+    fun = function(x) {
+      dnorm(
+        x,
+        mean = mean(returns_long$return),
+        sd = sd(returns_long$return)
+      )
+    },
+    color = "red",
+    linetype = "dashed"
+  ) +
+  facet_wrap(
+    ~ ticker,
+    scales = "free",
+    ncol = 3
+  ) +
+  labs(
+    title = "Rozdeleni tydennich vynosu",
+    subtitle = "Modra: empiricka hustota | Cervena: normalni rozdeleni",
+    x = "Tydenni vynos (%)",
+    y = "Hustota"
+  ) +
+  theme_minimal()
